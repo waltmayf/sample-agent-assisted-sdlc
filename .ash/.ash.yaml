@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/awslabs/automated-security-helper/refs/heads/main/automated_security_helper/schemas/AshConfig.json
+project_name: sample-agent-assisted-sdlc
+fail_on_findings: true
+ash_plugin_modules: []
+external_reports_to_include: []
+
+global_settings:
+  severity_threshold: HIGH
+  suppressions:
+    # === detect-secrets: test fixture files with intentional secret patterns ===
+    - rule_id: "SECRET-*"
+      path: "test/hooks/test_hooks.sh"
+      reason: "Intentional test fixtures — verifies secret-guard hook blocks credential patterns"
+    - rule_id: "SECRET-*"
+      path: "test-scripts/claude-code/test-security-hooks.sh"
+      reason: "Intentional test fixtures — verifies secret-guard hook blocks credential patterns"
+
+    # === bandit B104: binding to 0.0.0.0 (AgentCore Runtime service contract) ===
+    - rule_id: "B104"
+      path: "coding-assistants/**/main.py"
+      reason: "AgentCore Runtime service contract requires HTTP health server on 0.0.0.0:8080"
+    - rule_id: "B104"
+      path: "gateway/developer-mcp-servers/**/main.py"
+      reason: "MCP server runs inside AgentCore Runtime — binds 0.0.0.0:8000 per service contract"
+    - rule_id: "B104"
+      path: "project-management/github/mcp/main.py"
+      reason: "MCP server runs inside AgentCore Runtime — binds 0.0.0.0:8000 per service contract"
+    - rule_id: "B104"
+      path: "source-control/github/mcp/main.py"
+      reason: "MCP server runs inside AgentCore Runtime — binds 0.0.0.0:8000 per service contract"
+
+    # === bandit B310: urllib.request.urlopen (HTTPS to GitHub API only) ===
+    - rule_id: "B310"
+      path: "project-management/github/mcp/main.py"
+      reason: "urllib opens HTTPS connections to api.github.com only — no file:// scheme usage"
+    - rule_id: "B310"
+      path: "source-control/github/mcp/main.py"
+      reason: "urllib opens HTTPS connections to api.github.com only — no file:// scheme usage"
+
+    # === bandit B113: requests without timeout (false positive — timeout IS present) ===
+    - rule_id: "B113"
+      path: "project-management/shared/pipeline.py"
+      reason: "False positive — timeout=timeout+30 is present on the requests.post call"
+
+    # === checkov CKV2_GHA_1: workflow permissions ===
+    - rule_id: "CKV2_GHA_1"
+      path: ".github/**/*.yml"
+      reason: "Permissions are explicitly scoped per-job — not write-all at top level"
+
+  ignore_paths:
+    - path: "SECURITY-PRACTICES.md"
+      reason: "Documentation references credential patterns for illustration — not actual secrets"
+    - path: "SCAN-FINDINGS.md"
+      reason: "Security scan findings document with example patterns — not actual secrets"
+    - path: "security-scans/**"
+      reason: "Previous scan report files — meta-scanning produces false positives"
+    - path: "node_modules/**"
+      reason: "Third-party dependencies — scanned separately via npm audit"
+    - path: "**/.venv/**"
+      reason: "Python virtual environments — not committed, only third-party content"
+
+scanners:
+  bandit:
+    enabled: true
+  cdk-nag:
+    enabled: true
+  cfn-nag:
+    enabled: true
+  checkov:
+    enabled: true
+  detect-secrets:
+    enabled: true
+  npm-audit:
+    enabled: true
+  grype:
+    enabled: true
+  opengrep:
+    enabled: true
+  semgrep:
+    enabled: true
+  syft:
+    enabled: true
+
+reporters:
+  markdown:
+    enabled: true
+    options:
+      include_detailed_findings: true
+      max_detailed_findings: 20
+      top_hotspots_limit: 10
+      use_collapsible_details: true
+  sarif:
+    enabled: true
+  html:
+    enabled: true
+  text:
+    enabled: true
