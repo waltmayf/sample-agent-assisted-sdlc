@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "CfnDocsMCP"
+version = "0.1.0"
+description = "AgentCore MCP server for CloudFormation + CDK documentation and template validation"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp >= 2.11",
+    "httpx >= 0.27",
+    "beautifulsoup4 >= 4.12",
+    "markdownify >= 0.13",
+    "pydantic >= 2.7",
+    "cfn-lint >= 1.0",
+    "aws-opentelemetry-distro >= 0.10",
+    "boto3 >= 1.34",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

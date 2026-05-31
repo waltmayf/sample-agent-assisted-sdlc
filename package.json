@@ -1,0 +1,28 @@
+{
+  "name": "agent-assisted-sdlc",
+  "version": "0.1.0",
+  "description": "Deploy an agent-assisted SDLC platform on Amazon Bedrock AgentCore",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "@types/jest": "^30",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.10.1",
+    "aws-cdk": "2.1124.1",
+    "jest": "^30",
+    "ts-jest": "^29",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.255.0",
+    "cdk-nag": "^2.38.2",
+    "constructs": "^10.5.0",
+    "js-yaml": "^4.1.1"
+  }
+}

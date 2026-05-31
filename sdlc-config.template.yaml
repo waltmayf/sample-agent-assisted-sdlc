@@ -1,0 +1,89 @@
+# Agent-Assisted SDLC Configuration
+# Copy to sdlc-config.yaml and fill in your values.
+
+project: agent-assisted-sdlc        # Stack name prefix (alphanumeric + hyphens only)
+region: us-west-2
+
+# ─── VPC ───────────────────────────────────────────────────────────────────────
+# Creates a new VPC by default.
+# Provide vpcId to bring your own (all BYO fields become required).
+vpc:
+  maxAzs: 2
+  natGateways: 1
+  # BYO VPC — uncomment all fields below:
+  # vpcId: vpc-0abc123
+  # privateSubnetIds:
+  #   - subnet-aaa
+  #   - subnet-bbb
+  # agentRuntimeSecurityGroupId: sg-111
+  # fileSystemSecurityGroupId: sg-222
+
+# ─── Coding Assistant ──────────────────────────────────────────────────────────
+# The AI agent that reads issues, explores code, and opens pull requests.
+# Each type maps to a runtime container + plugin in coding-assistants/<dir>/
+# Mapping: claude-code → claude-code/, codex → codex/, kiro → kiro/
+codingAssistant:
+  type: claude-code               # claude-code | codex | kiro
+  model: global.anthropic.claude-opus-4-7
+  idleTimeout: 900                # Seconds idle before session terminates
+  maxLifetime: 2400               # Maximum session duration in seconds
+  sessionStorageMountPath: /mnt/workplace
+
+# ─── Source Control ────────────────────────────────────────────────────────────
+# Platform where code lives. Deploys an MCP server with code operations
+# (branch, push, PR) and provides credentials for cloning.
+sourceControl:
+  type: github                    # github | gitlab (future)
+  github:
+    org: ""                       # GitHub organization or username (e.g., "aws-samples")
+    appClientId: ""               # GitHub App Client ID (from app settings page)
+    installationId: ""            # GitHub App Installation ID (from installation URL)
+    privateKeyPath: ""            # Path to .pem file (relative to project root)
+    toolsets: repos,pull_requests,context
+    maxLifetime: 3300             # MCP server max lifetime (< token expiry of 3600)
+    privateRepo: false            # Set true if target repos are private
+    allowedRepos:                 # Required: exact repos that can trigger the pipeline
+      - "myorg/repo-a"
+      - "myorg/repo-b"
+
+# ─── Project Management ───────────────────────────────────────────────────────
+# Platform for issue tracking. Deploys an MCP server with issue operations
+# and a connector that triggers the pipeline on events (e.g., label added).
+projectManagement:
+  type: github                    # github | jira (future)
+  github:
+    toolsets: issues              # MCP toolsets to expose
+    maxLifetime: 3300
+    allowedUsers:                 # Required: GitHub usernames that can trigger the pipeline
+      - "myuser"                  # Use "*" to allow any user (not recommended for production)
+    labelPrefix: "agent"          # Prefix for pipeline labels (default: "agent")
+                                  # Labels: {prefix}:start, {prefix}:explore, {prefix}:pr-completed, etc.
+
+# ─── Gateway ──────────────────────────────────────────────────────────────────
+# Controls the AgentCore Gateway and all registered MCP server targets.
+#
+# Default behavior (no url):
+#   Deploys a managed gateway + source control MCP + project management MCP +
+#   any developer MCP servers listed below as targets.
+#
+# BYO gateway (url is set):
+#   Skips deploying the gateway, source control MCP, project management MCP,
+#   and developer MCP server stacks entirely. Only infra + assistant deploy.
+#   The coding assistant connects directly to your external gateway.
+gateway:
+  authorizerType: AWS_IAM         # AWS_IAM | NONE | CUSTOM_JWT
+  # BYO gateway — uncomment to use:
+  # url: https://my-gateway.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp
+  # credentialProviderArn: ""     # Required only for CUSTOM_JWT
+
+  # Additional developer MCP servers registered as gateway targets.
+  # Each entry deploys a container runtime and registers it on the gateway.
+  # See gateway/developer-mcp-servers/ for examples.
+  developerMcpServers:
+    - name: aws-docs
+      source: ./gateway/developer-mcp-servers/aws-docs
+    - name: cfn-docs
+      source: ./gateway/developer-mcp-servers/cfn-docs
+
+resourcePolicies:
+  enabled: false

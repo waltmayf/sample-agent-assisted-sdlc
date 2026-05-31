@@ -1,0 +1,31 @@
+{
+  "description": "Security hooks for autonomous coding agent",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__gateway__github-issues___issue_write",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/label-governance.sh", "timeout": 5}]
+      },
+      {
+        "matcher": "mcp__gateway__github-code___.*",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scope-guard.sh", "timeout": 5}]
+      },
+      {
+        "matcher": "mcp__gateway__github-issues___.*",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scope-guard.sh", "timeout": 5}]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/secret-guard.sh", "timeout": 5}]
+      },
+      {
+        "matcher": "mcp__gateway__github-code___push_files",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/secret-guard.sh", "timeout": 5}]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/bash-guard.sh", "timeout": 5}]
+      }
+    ]
+  }
+}

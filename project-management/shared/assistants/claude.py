@@ -1,0 +1,65 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Claude Code assistant strategy."""
+
+import base64
+
+from assistants.base import AssistantStrategy, _validate_identifier
+from pipeline import execute_command
+
+
+def _otel_attrs_prefix(session_id: str) -> str:
+    return (
+        "export OTEL_RESOURCE_ATTRIBUTES="
+        '"${OTEL_RESOURCE_ATTRIBUTES:+$OTEL_RESOURCE_ATTRIBUTES,}'
+        f'session.id={session_id},gen_ai.conversation.id={session_id}" && '
+    )
+
+
+class ClaudeStrategy(AssistantStrategy):
+    plugin_path = "/mnt/plugins/claude"
+
+    def run_pipeline(self, session_id: str, issue: dict) -> dict:
+        owner = _validate_identifier(issue["repo_owner"], "repo_owner")
+        repo = _validate_identifier(issue["repo_name"], "repo_name")
+        number = issue["issue_number"]
+        title = issue["issue_title"]
+
+        otel = _otel_attrs_prefix(session_id)
+
+        mcp_check = execute_command(
+            session_id,
+            f"sh -c 'cd /mnt/workplace/gitproject && {otel}claude mcp list 2>&1'",
+            timeout=60,
+        )
+        if "Connected" not in mcp_check.get("stdout", ""):
+            return {
+                "error": "MCP gateway not reachable",
+                "stdout": mcp_check.get("stdout", ""),
+                "stderr": mcp_check.get("stderr", ""),
+                "exitCode": 1,
+            }
+
+        prompt = (
+            f"Follow the orchestrator skill for issue #{number} "
+            f'("{title}"). Owner: {owner}, Repo: {repo}.'
+        )
+        prompt_b64 = base64.b64encode(prompt.encode()).decode()
+
+        execute_command(
+            session_id,
+            f"sh -c 'echo {prompt_b64} | base64 -d > /tmp/prompt.txt'",
+            timeout=10,
+        )
+
+        return execute_command(
+            session_id,
+            f"sh -c 'cd /mnt/workplace/gitproject && {otel}"
+            f"claude --continue --dangerously-skip-permissions "
+            f"--plugin-dir /mnt/workplace/gitproject "
+            f'-p "$(cat /tmp/prompt.txt)" '
+            f'--allowedTools "mcp__gateway__*,Read,Write,Edit,Bash,Task,ToolSearch" < /dev/null 2>&1\'',
+            timeout=2400,
+            blocking=False,
+        )

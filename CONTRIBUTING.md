@@ -57,3 +57,223 @@ If you discover a potential security issue in this project we ask that you notif
 ## Licensing
 
 See the [LICENSE](LICENSE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
+
+---
+
+## Development Setup
+
+```bash
+git clone <repo-url> && cd agent-assisted-sdlc
+npm install
+cp sdlc-config.template.yaml sdlc-config.yaml
+# Edit sdlc-config.yaml with your values
+npx cdk synth --quiet  # Verify everything compiles
+```
+
+**Prerequisites:** Node.js 20+, AWS CDK CLI, AWS credentials configured.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GitHub Issue (agent:start label)                               │
+│       │                                                         │
+│       ▼                                                         │
+│  Step Functions  ──►  Coding Assistant Runtime                  │
+│                       (Claude Code / Codex / Kiro)              │
+│                              │                                  │
+│                              ▼                                  │
+│                       AgentCore Gateway                         │
+│                       ┌──────┼──────┐                          │
+│                       ▼      ▼      ▼                          │
+│                 Source    Project   Developer                   │
+│                 Control   Mgmt     MCP Servers                 │
+│                 MCP       MCP      (aws-docs, cfn-docs, ...)   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**CDK Stack Deployment Order:**
+```
+Infra → Gateway → SourceControl → ProjectManagement → DeveloperMcp → Assistant
+```
+
+Each stack can fail and be redeployed independently without affecting upstream stacks.
+
+## Extension Points
+
+### Adding a Coding Assistant
+
+Create `coding-assistants/<name>/` with two subdirectories:
+
+```
+coding-assistants/<name>/
+├── runtime/
+│   ├── Dockerfile           # Container for AgentCore Runtime
+│   └── main.py              # Health server (port 8080)
+└── plugin/
+    ├── <instruction-file>   # Pipeline instructions in your CLI's native format
+    └── .mcp.json.template   # MCP gateway config (CDK renders {{GATEWAY_URL}}, {{REGION}})
+```
+
+**Runtime contract:**
+- Health server on port 8080
+- `GET /ping`, `GET /health` — health check endpoints
+- `POST /invocations` — receives commands from Step Functions Lambda
+- Mounts: `/mnt/workplace` (session storage), `/mnt/plugins` (shared plugins from Amazon S3 Files)
+
+**Config entry:**
+```yaml
+codingAssistant:
+  type: <name>    # Must match ASSISTANT_TO_DIR in lib/config.ts
+```
+
+**CDK mapping:** The `getAssistantDir()` function in `lib/config.ts` maps the type to the directory name. Add your type to the `ASSISTANT_TO_DIR` record.
+
+---
+
+### Adding a Source Control Platform
+
+Create `source-control/<platform>/mcp/`:
+
+```
+source-control/<platform>/mcp/
+├── main.py              # FastMCP server
+├── Dockerfile
+├── entrypoint.sh
+├── pyproject.toml
+└── README.md
+```
+
+**Required MCP tools:**
+
+| Tool | Description |
+|------|-------------|
+| `create_branch` | Create a feature branch from the default branch |
+| `push_files` | Stage files and push a commit |
+| `create_pull_request` | Open a PR with title and body |
+| `get_file_contents` | Read a file from a given ref |
+| `list_commits` | List recent commits on a branch |
+| `list_branches` | List available branches |
+| `search_code` | Search repository code |
+
+**Runtime contract:**
+- FastMCP application using streamable-http transport on port 8000
+- Authentication: generate short-lived tokens at container startup (stored in-memory, never exposed to gateway)
+- Container max lifetime < token expiry (e.g., 55 min lifetime for 60 min tokens)
+
+**Config entry:**
+```yaml
+sourceControl:
+  type: <platform>
+  <platform>:
+    # Platform-specific credentials
+```
+
+---
+
+### Adding a Project Management Platform
+
+Create `project-management/<platform>/`:
+
+```
+project-management/<platform>/
+├── mcp/
+│   ├── main.py              # FastMCP server for issue operations
+│   ├── Dockerfile
+│   ├── entrypoint.sh
+│   └── pyproject.toml
+└── connector/
+    ├── lambda/              # Lambda that starts Step Functions
+    │   └── index.py
+    ├── workflow/            # CI/CD trigger (GitHub Actions, webhook, etc.)
+    └── README.md
+```
+
+**Required MCP tools:**
+
+| Tool | Description |
+|------|-------------|
+| `issue_read` | Get issue details (title, body, comments) |
+| `issue_write` | Update issue title or body |
+| `add_issue_comment` | Post a comment on an issue |
+| `set_labels` | Set status labels (stage:exploring, state:pr-created) |
+| `list_issues` | List/filter issues |
+| `search_issues` | Full-text search issues |
+
+**Connector pattern:**
+1. An external event (label added, webhook fired, manual trigger) invokes a Lambda
+2. The Lambda resolves the full issue context (title, body, comments)
+3. The Lambda calls `StartExecution` on the Step Functions state machine with the issue payload
+4. The state machine orchestrates: setup session → invoke coding assistant
+
+**Config entry:**
+```yaml
+projectManagement:
+  type: <platform>
+  <platform>:
+    # Platform-specific settings
+```
+
+---
+
+### Adding a Developer MCP Server
+
+This is the simplest extension point. Create `gateway/developer-mcp-servers/<name>/`:
+
+```
+gateway/developer-mcp-servers/<name>/
+├── main.py              # FastMCP server with your tools
+├── Dockerfile
+├── pyproject.toml
+├── uv.lock
+└── README.md
+```
+
+**Registration:** Add to `sdlc-config.yaml`:
+```yaml
+gateway:
+  developerMcpServers:
+    - name: my-server           # Alphanumeric + hyphens
+      source: ./gateway/developer-mcp-servers/my-server
+```
+
+CDK automatically deploys the container and registers it as a gateway target on the next `cdk deploy`.
+
+---
+
+## CDK Architecture
+
+**Key constructs** (in `lib/constructs/`):
+
+| Construct | Purpose |
+|-----------|---------|
+| `network/vpc.ts` | Amazon VPC with BYO support |
+| `gateway/mcp-gateway.ts` | Gateway + waiter + cleanup |
+| `runtime/mcp-server.ts` | MCP server runtime (ECR + CodeBuild + CfnResource) |
+| `runtime/coding-assistant.ts` | Coding assistant runtime with filesystem mounts |
+| `storage/s3-files.ts` | Amazon S3 Files filesystem + mount targets + access point |
+| `connectors/github/github-connector.ts` | GitHub App token Lambda + Secrets Manager |
+
+## Testing
+
+```bash
+# Synthesize all stacks (validates TypeScript + cdk-nag)
+npx cdk synth --quiet
+
+# List stacks
+npx cdk ls
+
+# Deploy to a test account
+npx cdk deploy --all
+
+# Deploy a single stack
+npx cdk deploy agentcore-sdlc-source-control
+```
+
+## Pull Request Guidelines
+
+- One feature/fix per PR
+- Branch naming: `feat/<description>` or `fix/<description>`
+- Run `npx cdk synth --quiet` before pushing (ensures no cdk-nag violations)
+- Include a test plan in the PR description
+- If adding a new platform, include a working example in the PR

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gateway": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/mnt/plugins/gateway-iam-proxy/index.js", "--gateway-url", "{{GATEWAY_URL}}", "--region", "{{REGION}}"]
+    }
+  }
+}
