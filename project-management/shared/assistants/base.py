@@ -25,7 +25,7 @@ def _validate_identifier(value: str, field_name: str) -> str:
 class AssistantStrategy(ABC):
     """Each coding assistant implements this to define how it runs the SDLC pipeline."""
 
-    plugin_path: str = "/mnt/plugins/claude"
+    plugin_path: str = "/mnt/plugins"
 
     @property
     def runtime_arn(self) -> str:
@@ -37,13 +37,32 @@ class AssistantStrategy(ABC):
 
     def setup_workspace(self, session_id: str, issue: dict) -> dict:
         """Copy plugin to workspace, write issue/project context, fix permissions."""
+        # Debug: check what's actually at the plugin mount point
+        mount_check = execute_command(
+            session_id,
+            f"sh -c 'echo MOUNT: && ls -la {self.plugin_path}/ 2>&1'",
+        )
+        print(f"[setup_workspace] Plugin mount check: {mount_check.get('stdout', '')}")
+
         result = execute_command(
             session_id,
             f"sh -c 'mkdir -p /mnt/workplace/gitproject/.dev-claude /mnt/workplace/gitproject/.claude && "
-            f"cp -a {self.plugin_path}/. /mnt/workplace/gitproject/ && "
+            f"cd {self.plugin_path} && "
+            f"cp -r skills hooks gateway-iam-proxy settings.json /mnt/workplace/gitproject/ 2>/dev/null; "
+            f"cp -r .claude-plugin .mcp.json /mnt/workplace/gitproject/ 2>/dev/null; "
             f"cp /mnt/workplace/gitproject/settings.json /mnt/workplace/gitproject/.claude/settings.json && "
             f"chmod +x /mnt/workplace/gitproject/hooks/*.sh && echo OK'",
         )
+        print(
+            f"[setup_workspace] Copy result: {result.get('stdout', '')} | stderr: {result.get('stderr', '')}"
+        )
+
+        if "OK" not in result.get("stdout", ""):
+            raise RuntimeError(
+                f"Plugin copy failed — /mnt/plugins may not be mounted. "
+                f"Mount contents: {mount_check.get('stdout', '')} | "
+                f"Copy output: {result.get('stdout', '')}"
+            )
 
         issue_b64 = base64.b64encode(json.dumps(issue).encode()).decode()
         execute_command(
@@ -117,7 +136,34 @@ class AssistantStrategy(ABC):
             f"[ $EXIT -eq 0 ] && echo OK || echo FAILED'",
         )
 
+    def refresh_for_reinvocation(self, session_id: str, issue: dict) -> dict:
+        """Re-invocation: rotate invocation dir, refresh issue.json with latest context."""
+        # Rotate: create next invocation-N directory and update 'current' symlink
+        rotate_result = execute_command(
+            session_id,
+            "sh -c 'cd /mnt/workplace/gitproject/.dev-claude && "
+            "N=$(ls -d invocation-* 2>/dev/null | wc -l); N=$((N + 1)); "
+            "mkdir -p invocation-$N && "
+            "ln -sfn invocation-$N current && "
+            "echo invocation-$N'",
+        )
+        print(
+            f"[refresh_for_reinvocation] Rotated to: {rotate_result.get('stdout', '').strip()}"
+        )
+
+        # Refresh issue.json with latest event data (includes new comments)
+        issue_b64 = base64.b64encode(json.dumps(issue).encode()).decode()
+        execute_command(
+            session_id,
+            f"sh -c 'echo {issue_b64} | base64 -d > /mnt/workplace/gitproject/.dev-claude/issue.json'",
+        )
+        print("[refresh_for_reinvocation] Refreshed issue.json")
+
+        return rotate_result
+
     @abstractmethod
-    def run_pipeline(self, session_id: str, issue: dict) -> dict:
+    def run_pipeline(
+        self, session_id: str, issue: dict, is_reinvocation: bool = False
+    ) -> dict:
         """Execute the full SDLC pipeline. Returns execute_command result."""
         ...
