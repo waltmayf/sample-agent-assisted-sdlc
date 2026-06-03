@@ -5,6 +5,8 @@
 
 Contains the AgentCore Gateway IAM proxy and developer MCP servers.
 
+For the GitHub MCP runtime → toolset → gateway target mapping and its enforcement chain, see [`SECURITY-PRACTICES.md` § GitHub MCP toolset scoping](../SECURITY-PRACTICES.md#github-mcp-toolset-scoping).
+
 ## Components
 
 | Directory | Purpose | Extension Point? |
