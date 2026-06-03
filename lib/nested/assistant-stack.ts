@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as path from "path";
+
 import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -8,6 +11,8 @@ import { Construct } from "constructs";
 import { CodingAssistant } from "../constructs/runtime/coding-assistant";
 import { S3FilesStorage } from "../constructs/storage/s3-files";
 import { SdlcConfig, getAssistantDir } from "../config";
+
+const DEFAULT_MODEL = "global.anthropic.claude-opus-4-7";
 
 export interface AssistantStackProps extends cdk.StackProps {
   config: SdlcConfig;
@@ -74,6 +79,49 @@ export class AssistantStack extends cdk.Stack {
       resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`],
     }));
 
+    // Write plugins/settings.json to S3 with codingAssistant.model substituted
+    // into the {{MODEL}} placeholder. The static plugin/settings.json carries
+    // the placeholder; this custom resource is the sole writer of the rendered
+    // file (the plugins BucketDeployment excludes settings.json).
+    //
+    // Only claude-code ships a settings.json — Kiro and Codex use their own
+    // config formats and ignore this file, so skip the resource for them.
+    //
+    // Ordering: depend on the plugins BucketDeployment so the directory shape
+    // is in place before we put, and force the runtime to wait on this resource
+    // so a cold-start session never mounts an unsubstituted file.
+    if (config.codingAssistant.type === "claude-code") {
+      const pluginDir = `./coding-assistants/${getAssistantDir(config)}/plugin`;
+      const settingsTemplate = fs.readFileSync(
+        path.join(pluginDir, "settings.json"),
+        "utf-8",
+      );
+      const resolvedModel = config.codingAssistant.model ?? DEFAULT_MODEL;
+      const resolvedSettings = settingsTemplate.replace("{{MODEL}}", resolvedModel);
+
+      const resolveSettingsJson = new cr.AwsCustomResource(this, "ResolveSettingsJson", {
+        onUpdate: {
+          service: "S3",
+          action: "putObject",
+          parameters: {
+            Bucket: storage.bucket.bucketName,
+            Key: "plugins/settings.json",
+            Body: resolvedSettings,
+            ContentType: "application/json",
+          },
+          physicalResourceId: cr.PhysicalResourceId.of(`settings-json-${Date.now()}`),
+        },
+        policy: cr.AwsCustomResourcePolicy.fromStatements([
+          new iam.PolicyStatement({
+            actions: ["s3:PutObject"],
+            resources: [`${storage.bucket.bucketArn}/plugins/settings.json`],
+          }),
+        ]),
+      });
+      resolveSettingsJson.node.addDependency(storage.pluginsDeployment);
+      this.assistant.node.addDependency(resolveSettingsJson);
+    }
+
     // Write .mcp.json to S3 (gateway proxy config)
     new cr.AwsCustomResource(this, "ResolveMcpJson", {
       onUpdate: {
@@ -112,7 +160,6 @@ export class AssistantStack extends cdk.Stack {
 
     // Step Functions + Lambdas
     // Bundle both connector/lambda and shared/ into the Lambda package
-    const path = require("path");
     const pmDir = path.resolve("./project-management");
     const lambdaCode = cdk.aws_lambda.Code.fromAsset(pmDir, {
       bundling: {
@@ -120,8 +167,6 @@ export class AssistantStack extends cdk.Stack {
         command: ["bash", "-c", "echo unused"],
         local: {
           tryBundle(outputDir: string) {
-            const fs = require("fs");
-            const path = require("path");
             const { execSync } = require("child_process");
             const lambdaDir = path.join(pmDir, "github/connector/lambda");
             const sharedDir = path.join(pmDir, "shared");
