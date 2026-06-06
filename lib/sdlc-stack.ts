@@ -9,6 +9,7 @@ import { ProjectManagementStack } from "./nested/project-management-stack";
 import { DeveloperMcpStack } from "./nested/developer-mcp-stack";
 import { AssistantStack } from "./nested/assistant-stack";
 import { PoliciesStack } from "./nested/policies-stack";
+import { AgentCorePolicyStack } from "./nested/agentcore-policy-stack";
 import { SdlcConfig } from "./config";
 
 export function createStacks(app: cdk.App, config: SdlcConfig) {
@@ -34,9 +35,9 @@ export function createStacks(app: cdk.App, config: SdlcConfig) {
 
   const isByoGateway = !!config.gateway?.url;
 
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   // STACK 1: Infrastructure (VPC + Security Groups)
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   const infra = new InfrastructureStack(app, `${config.project}-infra`, { env, config });
   Aspects.of(infra).add(new AwsSolutionsChecks({ verbose: true }));
 
@@ -54,9 +55,9 @@ export function createStacks(app: cdk.App, config: SdlcConfig) {
     return;
   }
 
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   // STACKS 2-4: MCP Server Runtimes (deploy in parallel after infra)
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   const targets: McpTarget[] = [];
 
   const sourceControlStack = new SourceControlStack(app, `${config.project}-source-control`, {
@@ -117,9 +118,9 @@ export function createStacks(app: cdk.App, config: SdlcConfig) {
     lastMcpStack = developerMcpStack;
   }
 
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   // STACK 5: Gateway (creates gateway + registers all targets)
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   const gatewayStack = new GatewayStack(app, `${config.project}-gateway`, {
     env,
     config,
@@ -130,9 +131,9 @@ export function createStacks(app: cdk.App, config: SdlcConfig) {
   gatewayStack.addDependency(lastMcpStack);
   Aspects.of(gatewayStack).add(new AwsSolutionsChecks({ verbose: true }));
 
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   // STACK 6: Coding Assistant + Storage + Orchestration
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   const assistantStack = new AssistantStack(app, `${config.project}-assistant`, {
     env,
     config,
@@ -146,16 +147,16 @@ export function createStacks(app: cdk.App, config: SdlcConfig) {
   assistantStack.addDependency(gatewayStack);
   Aspects.of(assistantStack).add(new AwsSolutionsChecks({ verbose: true }));
 
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   // STACK 7: Resource-Based Policies (optional, production only)
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════
   if (config.resourcePolicies?.enabled) {
     const mcpExecutionRoleArns = [
       sourceControlStack.executionRoleArn,
       ...(config.projectManagement.type === "github" ? [projectMgmtStack!.executionRoleArn] : []),
     ];
 
-    const policiesStack = new PoliciesStack(app, `${config.project}-policies`, {
+    const policiesStack = new PoliciesStack(app, `${config.project}-resource-based-policies`, {
       env,
       config,
       codingAssistantRuntimeArn: assistantStack.assistant.runtimeArn,
@@ -171,4 +172,16 @@ export function createStacks(app: cdk.App, config: SdlcConfig) {
     policiesStack.addDependency(assistantStack);
     Aspects.of(policiesStack).add(new AwsSolutionsChecks({ verbose: true }));
   }
+
+  // ══════════════════════════════════
+  // STACK 8: AgentCore Cedar Policies
+  // ══════════════════════════════════
+  const agentCorePolicyStack = new AgentCorePolicyStack(app, `${config.project}-agentcore-policy`, {
+    env,
+    config,
+    gatewayArn: gatewayStack.gateway.gatewayArn,
+    gatewayId: gatewayStack.gatewayId,
+  });
+  agentCorePolicyStack.addDependency(gatewayStack);
+  Aspects.of(agentCorePolicyStack).add(new AwsSolutionsChecks({ verbose: true }));
 }

@@ -36,6 +36,19 @@ export class McpGateway extends Construct {
       ],
     }));
 
+    // Required for Policy Engine evaluation
+    this.gatewayRole.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        "bedrock-agentcore:AuthorizeAction",
+        "bedrock-agentcore:PartiallyAuthorizeActions",
+        "bedrock-agentcore:GetPolicyEngine",
+      ],
+      resources: [
+        `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:policy-engine/*`,
+        `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:gateway/*`,
+      ],
+    }));
+
     const createGateway = new cr.AwsCustomResource(this, "CreateGateway", {
       installLatestAwsSdk: true,
       onCreate: {
