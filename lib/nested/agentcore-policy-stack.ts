@@ -10,6 +10,9 @@ export interface AgentCorePolicyStackProps extends cdk.StackProps {
   config: SdlcConfig;
   gatewayArn: string;
   gatewayId: string;
+  gatewayName: string;
+  gatewayRoleArn: string;
+  gatewayAuthorizerType: string;
 }
 
 export class AgentCorePolicyStack extends cdk.Stack {
@@ -18,27 +21,38 @@ export class AgentCorePolicyStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: AgentCorePolicyStackProps) {
     super(scope, id, props);
 
-    const { config, gatewayArn, gatewayId } = props;
+    const { config, gatewayArn, gatewayId, gatewayName, gatewayRoleArn, gatewayAuthorizerType } = props;
 
     // Create PolicyEngine
     const policyEngine = new cdk.CfnResource(this, "PolicyEngine", {
       type: "AWS::BedrockAgentCore::PolicyEngine",
       properties: {
-        Name: config.project.replace(/-/g, "_") + "_policy_engine",
+        Name: config.project.replace(/-/g, "_") + "_cedar_engine",
       },
     });
-    this.policyEngineId = policyEngine.ref;
+    this.policyEngineId = policyEngine.getAtt("PolicyEngineId").toString();
 
     // Attach PolicyEngine to Gateway via UpdateGateway
+    // updateGateway is a full-replace API — all required fields must be passed
+    const policyEngineArn = policyEngine.getAtt("PolicyEngineArn").toString();
     const updateGateway = new cr.AwsCustomResource(this, "AttachPolicyEngine", {
       installLatestAwsSdk: true,
       onCreate: {
         service: "bedrock-agentcore-control",
         action: "updateGateway",
         parameters: {
-          gatewayId: gatewayId,
+          gatewayIdentifier: gatewayId,
+          name: gatewayName,
+          roleArn: gatewayRoleArn,
+          authorizerType: gatewayAuthorizerType,
+          protocolConfiguration: {
+            mcp: {
+              supportedVersions: ["2025-11-25"],
+            },
+          },
           policyEngineConfiguration: {
-            policyEngineId: this.policyEngineId,
+            arn: policyEngineArn,
+            mode: "ENFORCE",
           },
         },
         physicalResourceId: cr.PhysicalResourceId.of(`policy-engine-attachment-${gatewayId}`),
@@ -47,9 +61,18 @@ export class AgentCorePolicyStack extends cdk.Stack {
         service: "bedrock-agentcore-control",
         action: "updateGateway",
         parameters: {
-          gatewayId: gatewayId,
+          gatewayIdentifier: gatewayId,
+          name: gatewayName,
+          roleArn: gatewayRoleArn,
+          authorizerType: gatewayAuthorizerType,
+          protocolConfiguration: {
+            mcp: {
+              supportedVersions: ["2025-11-25"],
+            },
+          },
           policyEngineConfiguration: {
-            policyEngineId: this.policyEngineId,
+            arn: policyEngineArn,
+            mode: "ENFORCE",
           },
         },
         physicalResourceId: cr.PhysicalResourceId.of(`policy-engine-attachment-${gatewayId}`),
@@ -58,8 +81,15 @@ export class AgentCorePolicyStack extends cdk.Stack {
         service: "bedrock-agentcore-control",
         action: "updateGateway",
         parameters: {
-          gatewayId: gatewayId,
-          policyEngineConfiguration: null,
+          gatewayIdentifier: gatewayId,
+          name: gatewayName,
+          roleArn: gatewayRoleArn,
+          authorizerType: gatewayAuthorizerType,
+          protocolConfiguration: {
+            mcp: {
+              supportedVersions: ["2025-11-25"],
+            },
+          },
         },
         ignoreErrorCodesMatching: "ResourceNotFoundException",
       },
@@ -67,6 +97,10 @@ export class AgentCorePolicyStack extends cdk.Stack {
         new iam.PolicyStatement({
           actions: ["bedrock-agentcore:UpdateGateway", "bedrock-agentcore:GetGateway"],
           resources: ["*"],
+        }),
+        new iam.PolicyStatement({
+          actions: ["iam:PassRole"],
+          resources: [gatewayRoleArn],
         }),
       ]),
     });
@@ -104,7 +138,7 @@ when {
         },
       },
     });
-    branchProtectionPolicy.node.addDependency(policyEngine);
+    branchProtectionPolicy.node.addDependency(updateGateway);
 
     // Policy 2: Branch pattern enforcement (permit only feat/issue-*)
     const branchPatternPolicy = new cdk.CfnResource(this, "BranchPatternPolicy", {
@@ -130,7 +164,7 @@ when {
         },
       },
     });
-    branchPatternPolicy.node.addDependency(policyEngine);
+    branchPatternPolicy.node.addDependency(updateGateway);
 
     // Policy 3: Label governance (forbid {prefix}:start)
     const labelGovernancePolicy = new cdk.CfnResource(this, "LabelGovernancePolicy", {
@@ -153,7 +187,7 @@ when {
         },
       },
     });
-    labelGovernancePolicy.node.addDependency(policyEngine);
+    labelGovernancePolicy.node.addDependency(updateGateway);
 
     // Policy 4: Default permit for authenticated callers
     const defaultPermitPolicy = new cdk.CfnResource(this, "DefaultPermitPolicy", {
@@ -172,7 +206,7 @@ permit(
         },
       },
     });
-    defaultPermitPolicy.node.addDependency(policyEngine);
+    defaultPermitPolicy.node.addDependency(updateGateway);
 
     NagSuppressions.addStackSuppressions(this, [
       { id: "AwsSolutions-IAM5", reason: "UpdateGateway custom resource uses wildcard resources for gateway API calls" },

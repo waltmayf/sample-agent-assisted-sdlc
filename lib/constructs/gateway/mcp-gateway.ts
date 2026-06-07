@@ -24,7 +24,16 @@ export class McpGateway extends Construct {
     const stack = cdk.Stack.of(this);
 
     this.gatewayRole = new iam.Role(this, "GatewayRole", {
-      assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
+      assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com", {
+        conditions: {
+          StringEquals: {
+            "aws:SourceAccount": stack.account,
+          },
+          ArnLike: {
+            "aws:SourceArn": `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:*`,
+          },
+        },
+      }),
     });
 
     // Broad permission so the gateway can invoke any runtime in this account
@@ -33,19 +42,6 @@ export class McpGateway extends Construct {
       resources: [
         `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:runtime/*`,
         `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:runtime/*/runtime-endpoint/*`,
-      ],
-    }));
-
-    // Required for Policy Engine evaluation
-    this.gatewayRole.addToPolicy(new iam.PolicyStatement({
-      actions: [
-        "bedrock-agentcore:AuthorizeAction",
-        "bedrock-agentcore:PartiallyAuthorizeActions",
-        "bedrock-agentcore:GetPolicyEngine",
-      ],
-      resources: [
-        `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:policy-engine/*`,
-        `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:gateway/*`,
       ],
     }));
 
@@ -73,11 +69,6 @@ export class McpGateway extends Construct {
         },
         physicalResourceId: cr.PhysicalResourceId.fromResponse("gatewayId"),
       },
-      // No-op refresh on stack updates — re-fetches gatewayId so dependents
-      // (WaitForReady, Target*) can resolve getResponseField("gatewayId"). Without
-      // this, AwsCustomResource falls back to onCreate on Update, which throws
-      // ResourceConflictException on the existing gateway and leaves the
-      // response empty.
       onUpdate: {
         service: "bedrock-agentcore-control",
         action: "getGateway",
@@ -90,13 +81,8 @@ export class McpGateway extends Construct {
         service: "bedrock-agentcore-control",
         action: "deleteGateway",
         parameters: {
-          gatewayId: new cr.PhysicalResourceIdReference(),
+          gatewayIdentifier: new cr.PhysicalResourceIdReference(),
         },
-        // Waiter Lambda's Delete handler runs first and deletes the gateway,
-        // so this call typically hits an already-deleted gateway. Swallow that.
-        // ValidationException covers rollback cases where targets still exist
-        // (waiter handles target cleanup; this fallback runs only if waiter
-        // never deployed, in which case the orphaned gateway is the bigger fix).
         ignoreErrorCodesMatching: "ResourceNotFoundException|ValidationException",
       },
       policy: cr.AwsCustomResourcePolicy.fromStatements([

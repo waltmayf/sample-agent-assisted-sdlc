@@ -7,6 +7,8 @@ import { McpGateway } from "../constructs/gateway/mcp-gateway";
 import { SdlcConfig } from "../config";
 import { buildRuntimeEndpoint, registerGatewayTarget } from "../utils";
 
+const sanitizeName = (name: string) => name.replace(/-/g, "_").substring(0, 30);
+
 export interface McpTarget {
   name: string;
   runtimeArn: string;
@@ -31,6 +33,14 @@ export class GatewayStack extends cdk.Stack {
 
     const { config, targets } = props;
 
+    // PolicyEngine (created for future use — not attached to gateway during CDK deploy)
+    const policyEngine = new cdk.CfnResource(this, "PolicyEngine", {
+      type: "AWS::BedrockAgentCore::PolicyEngine",
+      properties: {
+        Name: sanitizeName(config.project) + "_cedar_v6",
+      },
+    });
+
     this.gateway = new McpGateway(this, "Gateway", {
       name: `${config.project}-gateway`,
       authorizerType: config.gateway?.authorizerType || "AWS_IAM",
@@ -50,6 +60,16 @@ export class GatewayStack extends cdk.Stack {
           sourceHash: target.imageTag,
       });
     }
+
+    // TODO: Cedar policies — requires targets to sync tools before actions are recognized.
+    // Post-deploy steps:
+    //   1. aws bedrock-agentcore-control update-gateway ... --policy-engine-configuration
+    //   2. aws bedrock-agentcore-control create-policy ... (after tools sync to schema)
+    // See issue #55 for full deployment script.
+
+    // Outputs for post-deploy policy attachment
+    new cdk.CfnOutput(this, "PolicyEngineArn", { value: policyEngine.getAtt("PolicyEngineArn").toString() });
+    new cdk.CfnOutput(this, "PolicyEngineId", { value: policyEngine.getAtt("PolicyEngineId").toString() });
 
     NagSuppressions.addStackSuppressions(this, [
       { id: "AwsSolutions-IAM5", reason: "Gateway and custom resource policies use CDK-managed wildcard resources" },
