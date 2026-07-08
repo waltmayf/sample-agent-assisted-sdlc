@@ -52,10 +52,10 @@ jobs:
           gh label create "agent-working" --repo "$GITHUB_REPOSITORY" --color "e4e669" --description "Claude is actively working on this" 2>/dev/null || true
           gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label "agent-working" 2>/dev/null || true
 
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-          version: '24'
+      # - uses: pnpm/action-setup@v4
+      #   with:
+      #     run_install: false
+      #     version: '24'
       
       # - uses: actions/setup-node@v5
       #   with:
