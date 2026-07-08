@@ -6,9 +6,11 @@ on:
     types: [labeled]
 
 permissions:
-  id-token: write
-  contents: read
-  issues: read
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write   # required for OIDC → AWS credentials
+  actions: write    # required for Claude to trigger and monitor the deploy workflow
 
 jobs:
   trigger-pipeline:
