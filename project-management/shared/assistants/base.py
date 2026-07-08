@@ -115,6 +115,20 @@ class AssistantStrategy(ABC):
 
     def setup_workspace(self, session_id: str, issue: dict) -> dict:
         """Copy plugin to workspace, write issue/project context, fix permissions."""
+        # Silence git's "dubious ownership" — the freshly cloned workspace is
+        # owned by root but git runs as a non-root uid in some container
+        # configurations. Without this, every git command the agent runs
+        # (branch/commit/push) fails with "detected dubious ownership" and no
+        # PR is ever produced. The re-invocation path (refresh_for_reinvocation,
+        # step 1) already does this; the first-invocation path did not. Idempotent,
+        # hardcoded path. See issue #8.
+        execute_command(
+            session_id,
+            "sh -c 'git config --global --add safe.directory /mnt/workplace/gitproject'",
+            timeout=10,
+        )
+        logger.info("safe_directory_configured")
+
         # Debug: check what's actually at the plugin mount point.
         # Bounded timeout: this is a trivial `ls`, so cap it well under the
         # Setup Lambda's 300s ceiling. Without an explicit timeout it inherits
