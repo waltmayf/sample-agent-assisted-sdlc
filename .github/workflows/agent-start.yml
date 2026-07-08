@@ -15,7 +15,20 @@ permissions:
 jobs:
   trigger-pipeline:
     # Change 'agent' to match your labelPrefix in sdlc-config.yaml
-    if: github.event.label.name == 'agent:start'
+    if: |
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR' ||
+        github.event.issue.author_association == 'OWNER' ||
+        github.event.issue.author_association == 'MEMBER' ||
+        github.event.issue.author_association == 'COLLABORATOR' ||
+        github.actor == 'waltmayf'
+      ) && (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@agent')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@agent')) ||
+        (github.event_name == 'issues' && contains(github.event.issue.body, '@agent'))
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Resolve issue details via GraphQL
