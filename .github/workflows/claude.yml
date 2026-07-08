@@ -57,10 +57,10 @@ jobs:
           run_install: false
           version: '24'
       
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-          cache: pnpm
+      # - uses: actions/setup-node@v5
+      #   with:
+      #     node-version: '24'
+      #     cache: pnpm
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
