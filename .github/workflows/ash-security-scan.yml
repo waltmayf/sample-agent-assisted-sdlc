@@ -108,30 +108,49 @@ jobs:
             const body = fs.readFileSync('/tmp/pr_comment.md', 'utf8');
             const prNumber = context.payload.pull_request.number;
 
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-            });
+            // Always publish the report to the job summary so it is visible
+            // even when we cannot comment (see catch below).
+            await core.summary.addRaw(body).write();
 
-            const existing = comments.find(c =>
-              c.body.includes('<!-- ASH-SECURITY-SCAN -->')
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body: body,
-              });
-            } else {
-              await github.rest.issues.createComment({
+            // Fork PRs get a read-only GITHUB_TOKEN regardless of the
+            // `permissions:` block, so commenting on the PR 403s. Treat the
+            // comment as best-effort: log a warning and rely on the job
+            // summary rather than failing the whole security scan.
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: body,
               });
+
+              const existing = comments.find(c =>
+                c.body.includes('<!-- ASH-SECURITY-SCAN -->')
+              );
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body: body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: body,
+                });
+              }
+            } catch (error) {
+              if (error.status === 403) {
+                core.warning(
+                  'Cannot post PR comment (read-only token, typical for fork PRs). ' +
+                  'The ASH report is available in the job summary above.'
+                );
+              } else {
+                throw error;
+              }
             }
 
       - name: Upload artifacts
