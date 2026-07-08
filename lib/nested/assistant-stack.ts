@@ -276,6 +276,26 @@ export class AssistantStack extends cdk.Stack {
       outputPath: "$.Payload",
     });
 
+    // Retry the setup task on transient AgentCore failures (issue #2). The
+    // clone/plugin-copy commands run inside the runtime session and can stall
+    // intermittently; a re-invocation on a fresh microVM has been observed to
+    // succeed. `Sandbox.Timedout` is the Lambda-timeout error surfaced when a
+    // command stream hangs past the 300s ceiling; `RuntimeCommandError` is the
+    // named exception raised by execute_command's bounded per-command timeouts.
+    setupTask.addRetry({
+      errors: [
+        "Sandbox.Timedout",
+        "RuntimeCommandError",
+        "Lambda.ServiceException",
+        "Lambda.AWSLambdaException",
+        "Lambda.SdkClientException",
+        "Lambda.ClientExecutionTimeoutException",
+      ],
+      maxAttempts: 3,
+      interval: cdk.Duration.seconds(5),
+      backoffRate: 2,
+    });
+
     const pipelineTask = new cdk.aws_stepfunctions_tasks.LambdaInvoke(this, "PipelineTask", {
       lambdaFunction: pipelineLambda,
       outputPath: "$.Payload",

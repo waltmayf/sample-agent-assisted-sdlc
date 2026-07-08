@@ -115,16 +115,26 @@ class AssistantStrategy(ABC):
 
     def setup_workspace(self, session_id: str, issue: dict) -> dict:
         """Copy plugin to workspace, write issue/project context, fix permissions."""
-        # Debug: check what's actually at the plugin mount point
+        # Debug: check what's actually at the plugin mount point.
+        # Bounded timeout: this is a trivial `ls`, so cap it well under the
+        # Setup Lambda's 300s ceiling. Without an explicit timeout it inherits
+        # execute_command's 600s default, so a stalled AgentCore command stream
+        # would kill the Lambda (Sandbox.Timedout) before surfacing a catchable
+        # RuntimeCommandError that Step Functions can retry. See issue #2.
         mount_check = execute_command(
             session_id,
             f"sh -c 'echo MOUNT: && ls -la {self.plugin_path}/ 2>&1'",
+            timeout=30,
         )
         logger.info(
             "plugin_mount_check",
             extra={"stdout": mount_check.get("stdout", "")},
         )
 
+        # Bounded timeout (see mount_check above / issue #2): a plain recursive
+        # copy of the plugin tree completes in seconds. Cap well under the 300s
+        # Lambda ceiling so a stalled command stream raises RuntimeCommandError
+        # (retryable by Step Functions) instead of silently timing out the Lambda.
         result = execute_command(
             session_id,
             f"sh -c 'mkdir -p /mnt/workplace/gitproject/.dev-claude /mnt/workplace/gitproject/.claude && "
@@ -133,6 +143,7 @@ class AssistantStrategy(ABC):
             f"cp -r .claude-plugin .mcp.json /mnt/workplace/gitproject/ 2>/dev/null; "
             f"cp /mnt/workplace/gitproject/settings.json /mnt/workplace/gitproject/.claude/settings.json && "
             f"chmod +x /mnt/workplace/gitproject/hooks/*.sh && echo OK'",
+            timeout=60,
         )
         logger.info(
             "plugin_copy_result",
@@ -208,9 +219,13 @@ class AssistantStrategy(ABC):
                 )
             return self.clone_private_repo(session_id, owner, repo, token)
         url = f"https://github.com/{owner}/{repo}.git"
+        # Bounded timeout (issue #2): keep under the Setup Lambda's 300s ceiling
+        # so a stalled clone raises a retryable RuntimeCommandError instead of a
+        # silent Lambda timeout. 180s is ample for a normal clone.
         return execute_command(
             session_id,
             f"sh -c 'git clone {url} /mnt/workplace/gitproject 2>&1 && echo OK || echo FAILED'",
+            timeout=180,
         )
 
     def clone_private_repo(
@@ -221,6 +236,8 @@ class AssistantStrategy(ABC):
 
         cred = f"https://x-access-token:{token}@github.com"
         cred_b64 = base64.b64encode(cred.encode()).decode()
+        # Bounded timeout (issue #2): see clone_repo. 180s is ample for a normal
+        # clone and stays under the 300s Lambda ceiling so a stall is retryable.
         return execute_command(
             session_id,
             f"sh -c 'echo {cred_b64} | base64 -d > /tmp/.git-creds && "
@@ -229,6 +246,7 @@ class AssistantStrategy(ABC):
             f"EXIT=$?; rm -f /tmp/.git-creds; "
             f"git config --global --unset credential.helper 2>/dev/null; "
             f"[ $EXIT -eq 0 ] && echo OK || echo FAILED'",
+            timeout=180,
         )
 
     def refresh_for_reinvocation(
